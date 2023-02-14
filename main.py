@@ -1,5 +1,7 @@
 import secrets
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends,Request
+from fastapi.responses import RedirectResponse
+
 import validators,schemas
 import models, schemas
 from database import SessionLocal,engine
@@ -19,14 +21,13 @@ def get_db():
 def read_root():
     return "Welcom to the URL shortner API..."
 
-@app.post("/url",response_model=schemas.URL)
+@app.post("/url",response_model=schemas.URLInfo)
 def create_url(url: schemas.URLBase,db: Session = Depends(get_db)):
     print("I am here?")
-    # breakpoint()
+
     if not validators.url(url.target_url):
         raise HTTPException(status_code=400,detail="Not a URL")
 
-    # try:
     chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     key = "".join(secrets.choice(chars) for _ in range(5))
     secret_key = "".join(secrets.choice(chars) for _ in range(8))
@@ -36,11 +37,25 @@ def create_url(url: schemas.URLBase,db: Session = Depends(get_db)):
         secret_key = secret_key,
         is_active=True
     )
+
     db.add(db_url)
     db.commit()
     db.refresh(db_url)
     db_url.url = key
     db_url.admin_url = secret_key
     return db_url
-    # except Exception as e:
-    #     raise HTTPException(status_code=500,detail=str(e))
+
+@app.get("/all_urls")
+def all_urls(db:Session=Depends(get_db),response_model=schemas.URLInfo):
+    db_urls = db.query(models.URL).all()
+    return db_urls
+
+@app.get("/{url_key}")
+def to_targeted_url(url_key:str,request:Request,db: Session = Depends(get_db)):
+    db_url = (db.query(models.URL).filter(models.URL.key==url_key,
+                                          models.URL.is_active).first())
+    if db_url:
+        return RedirectResponse(db_url.target_url)
+    else:
+        raise HTTPException(status_code=404,
+                            detail=f"no url found with key {url_key}")
